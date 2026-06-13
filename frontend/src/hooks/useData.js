@@ -5,15 +5,13 @@
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 
-const BASE = import.meta.env.VITE_API_BASE_URL || "";
-
 // ── Fixtures ─────────────────────────────────────────────
 export function useFixtures(sport = "football", from = null, to = null) {
   const params = new URLSearchParams({ sport });
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   const { data, error, isLoading } = useSWR(
-    `${BASE}/api/v1/fixtures?${params}`,
+    `/api/v1/fixtures?${params}`,
     fetcher,
     { refreshInterval: 60_000 }
   );
@@ -27,7 +25,7 @@ export function useFixtures(sport = "football", from = null, to = null) {
 // ── Match Detail ─────────────────────────────────────────
 export function useMatchDetail(matchId, sport = "football") {
   const { data, error, isLoading } = useSWR(
-    matchId ? `${BASE}/api/v1/match/${matchId}?sport=${sport}` : null,
+    matchId ? `/api/v1/match/${matchId}?sport=${sport}` : null,
     fetcher,
     { refreshInterval: 20_000, revalidateOnFocus: true }
   );
@@ -43,7 +41,7 @@ export function useMatchDetail(matchId, sport = "football") {
 // ── Lineups ──────────────────────────────────────────────
 export function useLineups(matchId, sport = "football") {
   const { data, error, isLoading } = useSWR(
-    matchId ? `${BASE}/api/v1/match/${matchId}/lineups?sport=${sport}` : null,
+    matchId ? `/api/v1/match/${matchId}/lineups?sport=${sport}` : null,
     fetcher,
     { refreshInterval: 300_000 }
   );
@@ -54,7 +52,7 @@ export function useLineups(matchId, sport = "football") {
 export function useStandings(competitionId, season = "2025", sport = "football") {
   const { data, error, isLoading } = useSWR(
     competitionId
-      ? `${BASE}/api/v1/standings/${competitionId}?season=${season}&sport=${sport}`
+      ? `/api/v1/standings/${competitionId}?season=${season}&sport=${sport}`
       : null,
     fetcher,
     { refreshInterval: 300_000 }
@@ -65,7 +63,7 @@ export function useStandings(competitionId, season = "2025", sport = "football")
 // ── Featured Competitions ─────────────────────────────────
 export function useFeaturedCompetitions() {
   const { data, error, isLoading } = useSWR(
-    `${BASE}/api/v1/competitions/featured`,
+    `/api/v1/competitions/featured`,
     fetcher,
     { refreshInterval: 3_600_000 }
   );
@@ -79,7 +77,7 @@ export function useFeaturedCompetitions() {
 // ── Team ─────────────────────────────────────────────────
 export function useTeam(teamId, sport = "football") {
   const { data, error, isLoading } = useSWR(
-    teamId ? `${BASE}/api/v1/team/${teamId}?sport=${sport}` : null,
+    teamId ? `/api/v1/team/${teamId}?sport=${sport}` : null,
     fetcher,
     { refreshInterval: 86_400_000 }
   );
@@ -88,7 +86,7 @@ export function useTeam(teamId, sport = "football") {
 
 export function useTeamFixtures(teamId, sport = "football") {
   const { data, error, isLoading } = useSWR(
-    teamId ? `${BASE}/api/v1/team/${teamId}/fixtures?sport=${sport}` : null,
+    teamId ? `/api/v1/team/${teamId}/fixtures?sport=${sport}` : null,
     fetcher,
     { refreshInterval: 300_000 }
   );
