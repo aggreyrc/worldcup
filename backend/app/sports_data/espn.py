@@ -80,7 +80,7 @@ class ESPNProvider(SportsDataProvider):
         # No API key needed — ESPN is fully public
         logger.info("ESPN provider ready (no API key required)")
 
-    def _get(self, url, params=None):
+    def _get(self, url, params=None, quiet_scoreboard_empty=False):
         """GET request to ESPN API — no auth headers needed."""
         try:
             resp = requests.get(
@@ -95,11 +95,48 @@ class ESPNProvider(SportsDataProvider):
             logger.error("Timeout on {}".format(url))
             raise
         except requests.HTTPError as e:
-            logger.error("HTTP {} on {}: {}".format(
-                e.response.status_code, url, e.response.text[:200]))
+            response = e.response
+            body = response.text if response is not None else ""
+            if not (
+                quiet_scoreboard_empty
+                and response is not None
+                and response.status_code == 400
+                and "Failed to get events endpoint" in body
+            ):
+                status_code = response.status_code if response is not None else "unknown"
+                logger.error("HTTP {} on {}: {}".format(
+                    status_code, url, body[:200]))
             raise
         except requests.RequestException as e:
             logger.error("Request error on {}: {}".format(url, e))
+            raise
+
+    def _get_scoreboard(self, league_slug, params=None):
+        """Fetch a scoreboard, treating ESPN's empty-event 400 as no games.
+
+        Some ESPN soccer competitions intermittently return HTTP 400 with
+        ``Failed to get events endpoint`` from the scoreboard endpoint instead
+        of an empty events list (for example when a competition is out of
+        season or has no event endpoint for the requested date). This should
+        not make the app look broken; callers can safely process an empty
+        scoreboard.
+        """
+        url = "{}/soccer/{}/scoreboard".format(SITE_API, league_slug)
+        try:
+            return self._get(url, params, quiet_scoreboard_empty=True)
+        except requests.HTTPError as e:
+            response = e.response
+            body = response.text if response is not None else ""
+            if (
+                response is not None
+                and response.status_code == 400
+                and "Failed to get events endpoint" in body
+            ):
+                logger.info(
+                    "ESPN scoreboard unavailable for %s; treating as no events",
+                    league_slug,
+                )
+                return {"events": []}
             raise
 
     def _parse_status(self, competition):
@@ -237,8 +274,7 @@ class ESPNProvider(SportsDataProvider):
 
         for league_slug, league_name in FEATURED_LEAGUES:
             try:
-                url  = "{}/soccer/{}/scoreboard".format(SITE_API, league_slug)
-                data = self._get(url)
+                data = self._get_scoreboard(league_slug)
                 for match in self._events_from_scoreboard(data):
                     if match.match_id not in seen and match.status in ("live", "ht"):
                         seen.add(match.match_id)
@@ -276,8 +312,7 @@ class ESPNProvider(SportsDataProvider):
         for league_slug, _ in FEATURED_LEAGUES:
             for date_str in dates:
                 try:
-                    url  = "{}/soccer/{}/scoreboard".format(SITE_API, league_slug)
-                    data = self._get(url, {"dates": date_str})
+                    data = self._get_scoreboard(league_slug, {"dates": date_str})
                     for match in self._events_from_scoreboard(data):
                         if match.match_id not in seen:
                             seen.add(match.match_id)
