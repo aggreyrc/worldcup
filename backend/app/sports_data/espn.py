@@ -224,6 +224,7 @@ class ESPNProvider(SportsDataProvider):
         # Venue
         venue_obj   = competition.get("venue") or {}
         venue_name  = venue_obj.get("fullName") or venue_obj.get("address", {}).get("city", "")
+        venue_address = venue_obj.get("address") or {}
 
         return MatchScore(
             match_id         = str(event.get("id", "")),
@@ -247,6 +248,14 @@ class ESPNProvider(SportsDataProvider):
                 "short_name": event.get("shortName", ""),
                 "season":     event.get("season", {}).get("year"),
                 "league_slug": league_id,
+                "venue_detail": {
+                    "id": venue_obj.get("id"),
+                    "name": venue_obj.get("fullName") or venue_obj.get("name"),
+                    "full_name": venue_obj.get("fullName"),
+                    "city": venue_address.get("city"),
+                    "country": venue_address.get("country"),
+                    "capacity": venue_obj.get("capacity"),
+                },
             },
         )
 
@@ -351,17 +360,42 @@ class ESPNProvider(SportsDataProvider):
                              "league": header.get("league") or {}}
                 score_obj = self._map_competition(event_obj, comp)
 
-                # Play-by-play / events (goals, cards)
+                # Match metadata
+                venue_obj = comp.get("venue") or {}
+                venue_address = venue_obj.get("address") or {}
+                officials = comp.get("officials") or data.get("officials") or []
+                referee = None
+                for official in officials:
+                    display_name = official.get("displayName") or official.get("fullName")
+                    role = (official.get("position") or {}).get("name") or official.get("role") or ""
+                    if display_name and (not referee or "referee" in role.lower()):
+                        referee = display_name
+                        if "referee" in role.lower():
+                            break
+
+                # Play-by-play / events (goals, cards, substitutions)
                 events = []
+                event_keywords = ("goal", "card", "substitution", "substitute", "penalty")
                 for play in (data.get("plays") or []):
                     ptype = play.get("type") or {}
+                    text = play.get("text", "")
+                    type_text = ptype.get("text", "")
+                    if not any(keyword in f"{type_text} {text}".lower() for keyword in event_keywords):
+                        continue
+                    clock = play.get("clock") or {}
+                    minute = None
+                    try:
+                        minute = int(str(clock.get("displayValue", "")).split(":")[0].replace("+", ""))
+                    except (TypeError, ValueError):
+                        pass
                     events.append({
-                        "time":   play.get("clock", {}).get("displayValue"),
+                        "time":   clock.get("displayValue"),
+                        "minute": minute,
                         "team":   (play.get("team") or {}).get("displayName"),
                         "player": (play.get("participants") or [{}])[0].get("athlete", {}).get("displayName"),
                         "assist": None,
-                        "type":   ptype.get("text", ""),
-                        "detail": play.get("text", ""),
+                        "type":   type_text,
+                        "detail": text,
                     })
 
                 # Statistics
@@ -372,7 +406,20 @@ class ESPNProvider(SportsDataProvider):
                     for stat in (team_stats.get("stats") or []):
                         stats[team_name][stat.get("label", "")] = stat.get("displayValue")
 
-                return {**score_obj.to_dict(), "events": events, "statistics": stats}
+                return {
+                    **score_obj.to_dict(),
+                    "events": events,
+                    "statistics": stats,
+                    "referee": referee,
+                    "venue_detail": {
+                        "id": venue_obj.get("id"),
+                        "name": venue_obj.get("fullName") or venue_obj.get("name"),
+                        "full_name": venue_obj.get("fullName"),
+                        "city": venue_address.get("city"),
+                        "country": venue_address.get("country"),
+                        "capacity": venue_obj.get("capacity"),
+                    },
+                }
 
             except Exception as e:
                 logger.warning("Summary failed for {} on {}: {}".format(
