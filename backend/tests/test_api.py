@@ -149,3 +149,31 @@ class TestFixturesEndpoints:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert any("Premier" in r["name"] for r in data["data"])
+
+class TestESPNProvider:
+    def test_scoreboard_400_failed_events_endpoint_returns_empty_events(self):
+        from app.sports_data.espn import ESPNProvider
+        import requests
+
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b'{"code":400,"message":"Failed to get events endpoint."}'
+        error = requests.HTTPError(response=response)
+
+        provider = ESPNProvider()
+        with patch.object(provider, "_get", side_effect=error):
+            assert provider._get_scoreboard("uefa.champions_league") == {"events": []}
+
+    def test_scoreboard_other_http_errors_still_raise(self):
+        from app.sports_data.espn import ESPNProvider
+        import requests
+
+        response = requests.Response()
+        response.status_code = 500
+        response._content = b'upstream error'
+        error = requests.HTTPError(response=response)
+
+        provider = ESPNProvider()
+        with patch.object(provider, "_get", side_effect=error):
+            with pytest.raises(requests.HTTPError):
+                provider._get_scoreboard("eng.1")
