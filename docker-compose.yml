@@ -1,0 +1,119 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL + TimescaleDB ──────────────────────────
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: livescore_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: livescore
+      POSTGRES_USER: livescore
+      POSTGRES_PASSWORD: livescore
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livescore"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: livescore_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Flask API ─────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: livescore_api
+    restart: unless-stopped
+    # env_file loads your .env for API keys (SPORTMONKS_KEY etc.)
+    # The environment: block below OVERRIDES any conflicting localhost URLs
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://livescore:livescore@postgres:5432/livescore
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: flask run --host=0.0.0.0 --port=5000
+
+  # ── Celery Worker + Beat Scheduler ───────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: livescore_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://livescore:livescore@postgres:5432/livescore
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A app.celery_app worker --beat --loglevel=info --concurrency=2
+
+  # ── React Frontend ────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: livescore_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:5000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    depends_on:
+      - api
+
+  # ── Nginx (optional, production only) ────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: livescore_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - frontend
+    profiles:
+      - production
+
+volumes:
+  pgdata:
