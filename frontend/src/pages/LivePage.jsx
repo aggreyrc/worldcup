@@ -33,7 +33,7 @@ export default function LivePage() {
         )}
       </div>
 
-      <LiveScoreTicker sport={sport} />
+      <LiveScoreTicker sport={sport} includeUpcoming />
       <MobileStickyAd />
     </div>
   );

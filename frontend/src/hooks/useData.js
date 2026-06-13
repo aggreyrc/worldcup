@@ -6,12 +6,12 @@ import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 
 // ── Fixtures ─────────────────────────────────────────────
-export function useFixtures(sport = "football", from = null, to = null) {
+export function useFixtures(sport = "football", from = null, to = null, enabled = true) {
   const params = new URLSearchParams({ sport });
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   const { data, error, isLoading } = useSWR(
-    `/api/v1/fixtures?${params}`,
+    enabled ? `/api/v1/fixtures?${params}` : null,
     fetcher,
     { refreshInterval: 60_000 }
   );
