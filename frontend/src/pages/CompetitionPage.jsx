@@ -13,7 +13,7 @@ const TABS = ["Fixtures", "Standings"];
 
 // Map competition IDs to display info
 const COMPETITION_META = {
-  "1":   { name: "World Cup 2026",       flag: "🌍" },
+  "1":   { name: "World Cup 2026",       flag: "🌍", season: "2026" },
   "2":   { name: "Champions League",     flag: "🏆" },
   "39":  { name: "Premier League",       flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
   "140": { name: "La Liga",              flag: "🇪🇸" },
@@ -26,14 +26,15 @@ const COMPETITION_META = {
 export default function CompetitionPage() {
   const { competitionId, sport = "football" } = useParams();
   const [activeTab, setActiveTab] = useState("Fixtures");
-  const meta = COMPETITION_META[competitionId] || { name: "Competition", flag: "🏆" };
+  const meta = COMPETITION_META[competitionId] || { name: "Competition", flag: "🏆", season: "2025" };
 
   const { fixtures, isLoading: fixturesLoading } = useFixtures(sport);
-  const { standings, isLoading: standingsLoading } = useStandings(competitionId, "2025", sport);
+  const { standings, isLoading: standingsLoading } = useStandings(competitionId, meta.season, sport);
 
   // Filter fixtures for this competition
   const compFixtures = fixtures.filter(
-    (f) => f.competition_id === competitionId || f.competition?.id === competitionId
+    (f) =>
+      String(f.competition_id || f.competition?.id || "") === String(competitionId)
   );
 
   useEffect(() => {
@@ -50,7 +51,7 @@ export default function CompetitionPage() {
         <span className="text-4xl">{meta.flag}</span>
         <div>
           <h1 className="font-display text-3xl font-bold text-white">{meta.name}</h1>
-          <p className="text-slate-500 text-sm">Season 2025/26</p>
+          <p className="text-slate-500 text-sm">Season {meta.season}</p>
         </div>
       </div>
 

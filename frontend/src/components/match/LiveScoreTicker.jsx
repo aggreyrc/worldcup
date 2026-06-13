@@ -5,6 +5,7 @@
  */
 import { useMemo } from "react";
 import { useLiveScores } from "@/hooks/useLiveScores";
+import { useFixtures } from "@/hooks/useData";
 import MatchCard, { MatchCardSkeleton } from "./MatchCard";
 import AdSlot from "@/components/ads/AdSlot";
 import TeamLogo from "@/components/ui/TeamLogo";
@@ -20,15 +21,27 @@ function groupByCompetition(matches) {
   }, {});
 }
 
-export default function LiveScoreTicker({ sport = "football" }) {
+export default function LiveScoreTicker({ sport = "football", includeUpcoming = false }) {
   const { matches, status } = useLiveScores(sport);
+  const { fixtures, isLoading: fixturesLoading } = useFixtures(sport, null, null, includeUpcoming);
+
+  const upcomingMatches = useMemo(() => {
+    if (!includeUpcoming) return [];
+    const liveIds = new Set(matches.map((match) => String(match.match_id)));
+    return fixtures.filter((fixture) => {
+      const isUpcoming = fixture.status === "ns" || fixture.status === "tbd" || fixture.status == null;
+      return isUpcoming && !liveIds.has(String(fixture.match_id));
+    });
+  }, [fixtures, includeUpcoming, matches]);
+
+  const allMatches = useMemo(() => [...matches, ...upcomingMatches], [matches, upcomingMatches]);
 
   const grouped = useMemo(() => {
-    const g = groupByCompetition(matches);
+    const g = groupByCompetition(allMatches);
     return Object.values(g);
-  }, [matches]);
+  }, [allMatches]);
 
-  if (status === "connecting") {
+  if (status === "connecting" || (includeUpcoming && fixturesLoading && !matches.length)) {
     return (
       <div className="space-y-2">
         {Array.from({ length: 4 }).map((_, i) => <MatchCardSkeleton key={i} />)}
@@ -40,8 +53,8 @@ export default function LiveScoreTicker({ sport = "football" }) {
     return (
       <div className="text-center py-16">
         <div className="text-5xl mb-4">⚽</div>
-        <p className="text-slate-400 text-lg">No live matches right now.</p>
-        <p className="text-slate-500 text-sm mt-1">Check back during kick-off times.</p>
+        <p className="text-slate-400 text-lg">No matches right now.</p>
+        <p className="text-slate-500 text-sm mt-1">Check back for live scores and upcoming kick-offs.</p>
       </div>
     );
   }
@@ -57,7 +70,7 @@ export default function LiveScoreTicker({ sport = "football" }) {
           </>
         )}
         {status === "stale" && <span className="text-amber-400">⚠ Data may be delayed</span>}
-        <span className="ml-auto">{matches.length} matches</span>
+        <span className="ml-auto">{matches.length} live · {upcomingMatches.length} upcoming</span>
       </div>
 
       {grouped.map((group, groupIdx) => (

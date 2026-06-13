@@ -4,6 +4,24 @@
 import { Link } from "react-router-dom";
 import TeamLogo from "@/components/ui/TeamLogo";
 
+
+function normalizeStandings(standings) {
+  if (!standings) return [];
+  if (Array.isArray(standings.groups)) return standings.groups;
+  if (Array.isArray(standings)) return [standings];
+  if (Array.isArray(standings.table)) return [standings.table];
+  if (Array.isArray(standings.standings)) return [standings.standings];
+  return [];
+}
+
+function normalizeRow(row, index) {
+  return {
+    ...row,
+    rank: row.rank ?? row.position ?? index + 1,
+    goal_difference: row.goal_difference ?? row.goals_diff ?? row.goalDiff ?? 0,
+  };
+}
+
 function FormPip({ result }) {
   const cls = result === "W" ? "form-w" : result === "D" ? "form-d" : "form-l";
   return (
@@ -14,15 +32,17 @@ function FormPip({ result }) {
 }
 
 export default function StandingsTable({ standings, sport = "football" }) {
-  if (!standings?.groups?.length) {
+  const groups = normalizeStandings(standings).filter((group) => group.length);
+
+  if (!groups.length) {
     return <p className="text-slate-500 text-sm py-4">No standings available.</p>;
   }
 
-  const isGroupStage = standings.groups.length > 1;
+  const isGroupStage = groups.length > 1;
 
   return (
     <div className="space-y-6">
-      {standings.groups.map((group, gi) => (
+      {groups.map((group, gi) => (
         <div key={gi}>
           {isGroupStage && (
             <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1">
@@ -45,7 +65,8 @@ export default function StandingsTable({ standings, sport = "football" }) {
                 </tr>
               </thead>
               <tbody>
-                {group.map((row, i) => {
+                {group.map((rawRow, i) => {
+                  const row = normalizeRow(rawRow, i);
                   const isQualify = row.description?.toLowerCase().includes("champion") ||
                                     row.description?.toLowerCase().includes("qualif");
                   const isRelegate = row.description?.toLowerCase().includes("relegat");
