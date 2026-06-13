@@ -68,3 +68,24 @@ export function groupByDate(fixtures) {
     return groups;
   }, {});
 }
+
+/**
+ * UTC kickoff display for detail pages.
+ */
+export function formatKickoffUtc(isoString) {
+  if (!isoString) return "TBC";
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+      timeZoneName: "short",
+    }).format(parseISO(isoString));
+  } catch {
+    return "TBC";
+  }
+}
