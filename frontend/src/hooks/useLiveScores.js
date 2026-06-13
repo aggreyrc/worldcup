@@ -5,8 +5,8 @@
  * status: "connecting" | "live" | "stale" | "error" | "idle"
  */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { api, buildUrl } from "@/lib/api";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const POLL_INTERVAL_MS = 20_000;
 
 export function useLiveScores(sport = "football") {
@@ -22,18 +22,20 @@ export function useLiveScores(sport = "football") {
     setStatus(payload.source === "error" ? "stale" : "live");
   }, []);
 
+  const fetchSnapshot = useCallback(async () => {
+    try {
+      const json = await api.getLiveScores(sport);
+      handleData(json);
+    } catch {
+      setStatus("stale");
+    }
+  }, [sport, handleData]);
+
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`${BASE_URL}/api/v1/scores/live?sport=${sport}`);
-        const json = await res.json();
-        handleData(json);
-      } catch {
-        setStatus("stale");
-      }
-    }, POLL_INTERVAL_MS);
-  }, [sport, handleData]);
+    fetchSnapshot();
+    pollRef.current = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
+  }, [fetchSnapshot]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -44,10 +46,16 @@ export function useLiveScores(sport = "football") {
 
   useEffect(() => {
     setStatus("connecting");
+    setMatches([]);
+    setSource(null);
 
-    // Try SSE first
+    // Fetch a snapshot immediately. The snapshot endpoint falls back to the
+    // provider on Redis cold starts, while the SSE stream only reads Redis.
+    fetchSnapshot();
+
+    // Try SSE first for Redis-backed live updates.
     if (typeof EventSource !== "undefined") {
-      const url = `${BASE_URL}/api/v1/scores/live/stream?sport=${sport}`;
+      const url = buildUrl(`/api/v1/scores/live/stream?sport=${encodeURIComponent(sport)}`);
       const es = new EventSource(url);
       esRef.current = es;
 
@@ -63,7 +71,7 @@ export function useLiveScores(sport = "football") {
         setStatus("stale");
         es.close();
         esRef.current = null;
-        // Fall back to polling
+        // Fall back to polling the snapshot endpoint, which can fetch directly.
         startPolling();
       };
 
@@ -73,10 +81,10 @@ export function useLiveScores(sport = "football") {
       };
     }
 
-    // SSE not supported — use polling
+    // SSE not supported — use polling.
     startPolling();
     return stopPolling;
-  }, [sport, handleData, startPolling, stopPolling]);
+  }, [sport, handleData, fetchSnapshot, startPolling, stopPolling]);
 
   return { matches, status, source };
 }
