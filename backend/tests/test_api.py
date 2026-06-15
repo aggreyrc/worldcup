@@ -164,6 +164,41 @@ class TestESPNProvider:
         with patch.object(provider, "_get", side_effect=error):
             assert provider._get_scoreboard("uefa.champions_league") == {"events": []}
 
+
+    def test_summary_header_uses_competition_date_for_kickoff(self):
+        from app.sports_data.espn import ESPNProvider
+
+        provider = ESPNProvider()
+        header = {
+            "id": "401",
+            "league": {"name": "FIFA World Cup", "slug": "fifa.world"},
+            "season": {"year": 2026},
+        }
+        competition = {
+            "date": "2026-06-15T19:00Z",
+            "competitors": [
+                {
+                    "homeAway": "home",
+                    "score": "2",
+                    "team": {"id": "1", "displayName": "Belgium"},
+                },
+                {
+                    "homeAway": "away",
+                    "score": "1",
+                    "team": {"id": "2", "displayName": "Egypt"},
+                },
+            ],
+            "status": {"type": {"name": "STATUS_IN_PROGRESS", "state": "in"}},
+        }
+
+        event = provider._summary_event_for_header("401", header, competition)
+        score = provider._map_competition(event, competition).to_dict()
+
+        assert score["kickoff_utc"] == "2026-06-15T19:00Z"
+        assert score["competition"] == "FIFA World Cup"
+        assert score["home_team"] == "Belgium"
+        assert score["away_team"] == "Egypt"
+
     def test_scoreboard_other_http_errors_still_raise(self):
         from app.sports_data.espn import ESPNProvider
         import requests

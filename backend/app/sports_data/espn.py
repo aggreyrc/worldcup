@@ -334,6 +334,31 @@ class ESPNProvider(SportsDataProvider):
         logger.info("ESPN: {} fixtures ({} to {})".format(len(results), date_from, date_to))
         return results
 
+    def _summary_event_for_header(self, fixture_id, header, competition):
+        """Build an event-shaped object from ESPN summary data.
+
+        Scoreboard responses expose kickoff and league data on the event, while
+        summary responses keep the same details in slightly different places.
+        Normalising those fields before calling ``_map_competition`` prevents
+        the match detail page from falling back to ``TBC`` for valid matches.
+        """
+        league = header.get("league") or competition.get("league") or {}
+        kickoff_utc = (
+            header.get("gameDate")
+            or header.get("date")
+            or competition.get("date")
+            or competition.get("startDate")
+            or ""
+        )
+
+        return {
+            "id": str(header.get("id") or fixture_id),
+            "date": kickoff_utc,
+            "league": league,
+            "shortName": header.get("shortName", ""),
+            "season": header.get("season") or competition.get("season") or {},
+        }
+
     # ── Match detail ──────────────────────────────────────────
 
     def get_fixture_detail(self, fixture_id):
@@ -356,8 +381,7 @@ class ESPNProvider(SportsDataProvider):
                     continue
 
                 comp      = competitions[0]
-                event_obj = {"id": fixture_id, "date": header.get("gameDate", ""),
-                             "league": header.get("league") or {}}
+                event_obj = self._summary_event_for_header(fixture_id, header, comp)
                 score_obj = self._map_competition(event_obj, comp)
 
                 # Match metadata
