@@ -1,93 +1,31 @@
 /**
- * AdSlot — lazy-loads AdSense units only when they enter the viewport.
+ * AdSlot — Google AdSense ad unit component.
  *
- * Props:
- *   slot      — ad slot identifier (maps to an AdSense slot ID)
- *   sticky    — stick to viewport top on scroll (sidebar use)
- *   className — extra classes for wrapper
+ * Uses your publisher ID: ca-pub-7758251123781202
+ * Ad slot: 1804601486
  *
- * UX rules enforced:
- *   - Reserved min-height prevents CLS
- *   - Loads only when visible (IntersectionObserver)
- *   - Premium users (tier !== "free") see no ads
+ * Features:
+ *  - Lazy loads via IntersectionObserver (only when visible)
+ *  - Reserved min-height prevents CLS (layout shift)
+ *  - Hidden for premium users (tier !== "free")
+ *  - Shows placeholder in development mode
+ *  - Mobile sticky footer ad hides on scroll-up
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-const ADSENSE_SRC = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js";
+const PUBLISHER_ID = "ca-pub-7758251123781202";
+const AD_SLOT      = "1804601486";
 
-// Slot configuration — maps slot key → ad unit dimensions and AdSense slot env vars.
-const SLOT_CONFIG = {
-  header_banner: {
-    width: "100%",
-    height: 50,
-    format: "auto",
-    fullWidthResponsive: true,
-    slotEnv: "VITE_ADSENSE_HEADER_BANNER_SLOT",
-  },
-  in_feed: {
-    width: "100%",
-    height: 90,
-    format: "fluid",
-    layoutKey: "-fb+5w+4e-db+86",
-    slotEnv: "VITE_ADSENSE_IN_FEED_SLOT",
-  },
-  sidebar_top: {
-    width: 300,
-    height: 250,
-    format: "auto",
-    fullWidthResponsive: false,
-    slotEnv: "VITE_ADSENSE_SIDEBAR_TOP_SLOT",
-  },
-  sidebar_sticky: {
-    width: 160,
-    height: 600,
-    format: "auto",
-    fullWidthResponsive: false,
-    slotEnv: "VITE_ADSENSE_SIDEBAR_STICKY_SLOT",
-  },
-  in_article: {
-    width: 300,
-    height: 250,
-    format: "fluid",
-    layout: "in-article",
-    slotEnv: "VITE_ADSENSE_IN_ARTICLE_SLOT",
-  },
-  mobile_footer: {
-    width: "100%",
-    height: 50,
-    format: "auto",
-    fullWidthResponsive: true,
-    slotEnv: "VITE_ADSENSE_MOBILE_FOOTER_SLOT",
-  },
+// Minimum heights per slot to prevent CLS
+const SLOT_HEIGHTS = {
+  header_banner:  90,
+  in_feed:        90,
+  in_article:     250,
+  sidebar_top:    250,
+  sidebar_sticky: 600,
+  mobile_footer:  60,
 };
 
-function getEnv(name) {
-  return import.meta.env[name];
-}
-
-function getClientId() {
-  return getEnv("VITE_ADSENSE_CLIENT");
-}
-
-function getSlotId(config) {
-  return getEnv(config.slotEnv) || getEnv("VITE_ADSENSE_DEFAULT_SLOT");
-}
-
-function ensureAdSenseScript(clientId) {
-  if (!clientId || typeof document === "undefined") return;
-
-  const scriptId = "adsense-script";
-  if (document.getElementById(scriptId)) return;
-
-  const script = document.createElement("script");
-  script.id = scriptId;
-  script.async = true;
-  script.crossOrigin = "anonymous";
-  script.src = `${ADSENSE_SRC}?client=${encodeURIComponent(clientId)}`;
-  document.head.appendChild(script);
-}
-
-// Check user tier from localStorage (set on login)
 function isAdFree() {
   try {
     const tier = localStorage.getItem("user_tier");
@@ -97,40 +35,29 @@ function isAdFree() {
   }
 }
 
-export default function AdSlot({ slot, sticky = false, className = "", index = 0 }) {
-  const ref = useRef(null);
-  const [loaded, setLoaded] = useState(false);
-  const config = SLOT_CONFIG[slot];
-  const clientId = getClientId();
-  const adSlotId = config ? getSlotId(config) : null;
-  const isDev = import.meta.env.DEV;
-  const canRequestAd = Boolean(config && clientId && adSlotId && !isAdFree());
-
-  const adStyle = useMemo(
-    () => ({
-      display: "block",
-      minHeight: config?.height,
-      width: config?.width,
-    }),
-    [config]
-  );
+export default function AdSlot({ slot = "in_feed", index = 0, className = "", sticky = false }) {
+  const ref      = useRef(null);
+  const pushed   = useRef(false);
+  const [visible, setVisible] = useState(false);
+  const isDev    = import.meta.env.DEV;
+  const minH     = SLOT_HEIGHTS[slot] || 90;
 
   useEffect(() => {
-    if (!canRequestAd) return;
-    ensureAdSenseScript(clientId);
-  }, [canRequestAd, clientId]);
-
-  useEffect(() => {
-    if (!canRequestAd) return;
+    if (isAdFree() || pushed.current) return;
     const el = ref.current;
     if (!el) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting && !loaded) {
-          setLoaded(true);
-          window.adsbygoogle = window.adsbygoogle || [];
-          window.adsbygoogle.push({});
+        if (entry.isIntersecting && !pushed.current) {
+          setVisible(true);
+          pushed.current = true;
+          // Push ad to AdSense
+          try {
+            (window.adsbygoogle = window.adsbygoogle || []).push({});
+          } catch (e) {
+            console.warn("AdSense push error:", e);
+          }
           observer.disconnect();
         }
       },
@@ -138,81 +65,118 @@ export default function AdSlot({ slot, sticky = false, className = "", index = 0
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [canRequestAd, loaded]);
-
-  if (!config || isAdFree()) return null;
-
-  return (
-    <div
-      className={`${sticky ? "sticky top-4" : ""} ${className}`}
-      style={{
-        width: config.width,
-        minHeight: config.height,
-      }}
-    >
-      {canRequestAd ? (
-        <ins
-          ref={ref}
-          id={`${slot}-${index}`}
-          className="adsbygoogle ad-slot"
-          aria-label="Advertisement"
-          style={adStyle}
-          data-ad-client={clientId}
-          data-ad-slot={adSlotId}
-          data-ad-format={config.format}
-          data-ad-layout={config.layout}
-          data-ad-layout-key={config.layoutKey}
-          data-full-width-responsive={String(config.fullWidthResponsive ?? true)}
-        />
-      ) : (
-        <div
-          ref={ref}
-          id={`${slot}-${index}`}
-          className="ad-slot"
-          aria-label="Advertisement"
-          style={{ minHeight: config.height, width: config.width }}
-        >
-          {isDev && (
-            <div className="flex flex-col items-center justify-center w-full h-full text-slate-600 text-xs gap-1">
-              <span className="font-mono opacity-50">AD</span>
-              <span className="opacity-30">
-                Configure VITE_ADSENSE_CLIENT and {config.slotEnv}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Mobile sticky footer ad — shown only on mobile, hides on scroll-up.
- */
-export function MobileStickyAd() {
-  const [visible, setVisible] = useState(true);
-  const lastY = useRef(0);
-
-  useEffect(() => {
-    const handler = () => {
-      const currentY = window.scrollY;
-      setVisible(currentY <= lastY.current || currentY < 100);
-      lastY.current = currentY;
-    };
-    window.addEventListener("scroll", handler, { passive: true });
-    return () => window.removeEventListener("scroll", handler);
   }, []);
 
   if (isAdFree()) return null;
 
   return (
     <div
-      className={`fixed bottom-0 left-0 right-0 z-30 xl:hidden transition-transform duration-300 ${
+      className={`${sticky ? "sticky top-4" : ""} ${className}`}
+      style={{ minHeight: minH }}
+      aria-label="Advertisement"
+    >
+      {isDev ? (
+        /* Dev placeholder — shows slot name and size */
+        <div
+          style={{
+            minHeight: minH,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(255,255,255,0.03)",
+            border: "1px dashed rgba(255,255,255,0.08)",
+            borderRadius: 8,
+            color: "rgba(255,255,255,0.2)",
+            fontSize: 11,
+            fontFamily: "monospace",
+            gap: 4,
+          }}
+        >
+          <span>AD SLOT</span>
+          <span style={{ opacity: 0.5 }}>{slot} · {minH}px</span>
+          <span style={{ opacity: 0.3 }}>{PUBLISHER_ID}</span>
+        </div>
+      ) : (
+        /* Production — real AdSense unit */
+        <ins
+          ref={ref}
+          className="adsbygoogle"
+          style={{ display: "block", minHeight: minH }}
+          data-ad-client={PUBLISHER_ID}
+          data-ad-slot={AD_SLOT}
+          data-ad-format="auto"
+          data-full-width-responsive="true"
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * MobileStickyAd — fixed footer ad on mobile.
+ * Hides when user scrolls down (shows when scrolling back up).
+ */
+export function MobileStickyAd() {
+  const [visible, setVisible] = useState(true);
+  const lastY  = useRef(0);
+  const pushed = useRef(false);
+  const isDev  = import.meta.env.DEV;
+
+  useEffect(() => {
+    const handler = () => {
+      const y = window.scrollY;
+      setVisible(y < lastY.current || y < 100);
+      lastY.current = y;
+    };
+    window.addEventListener("scroll", handler, { passive: true });
+    return () => window.removeEventListener("scroll", handler);
+  }, []);
+
+  useEffect(() => {
+    if (isAdFree() || pushed.current || isDev) return;
+    if (visible && !pushed.current) {
+      pushed.current = true;
+      try {
+        (window.adsbygoogle = window.adsbygoogle || []).push({});
+      } catch (e) {
+        console.warn("AdSense mobile footer push error:", e);
+      }
+    }
+  }, [visible, isDev]);
+
+  if (isAdFree()) return null;
+
+  return (
+    <div
+      className={`fixed bottom-0 left-0 right-0 z-30 xl:hidden transition-transform duration-300 bg-pitch-mid border-t border-white/5 ${
         visible ? "translate-y-0" : "translate-y-full"
       }`}
-      style={{ minHeight: 50 }}
+      style={{ minHeight: 60 }}
+      aria-label="Advertisement"
     >
-      <AdSlot slot="mobile_footer" />
+      {isDev ? (
+        <div style={{
+          height: 60,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "rgba(255,255,255,0.2)",
+          fontSize: 11,
+          fontFamily: "monospace",
+        }}>
+          AD · mobile_footer · 60px
+        </div>
+      ) : (
+        <ins
+          className="adsbygoogle"
+          style={{ display: "block", minHeight: 60 }}
+          data-ad-client={PUBLISHER_ID}
+          data-ad-slot={AD_SLOT}
+          data-ad-format="auto"
+          data-full-width-responsive="true"
+        />
+      )}
     </div>
   );
 }
