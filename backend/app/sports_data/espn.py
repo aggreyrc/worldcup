@@ -4,26 +4,6 @@ ESPN Public API Provider
 Base: https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/{resource}
 
 NO API KEY REQUIRED — completely free and public.
-Covers 17 sports, 139 leagues globally.
-
-Key endpoints used:
-  scoreboard              — live + scheduled scores
-  scoreboard?dates=YYYYMMDD — fixtures by date
-  summary?event={id}      — full match detail, lineups, stats
-  standings               — league table (via /apis/v2/)
-  teams/{id}              — team profile
-  teams/{id}/schedule     — team fixtures
-
-Soccer league slugs (ESPN uses these):
-  eng.1  = Premier League
-  esp.1  = La Liga
-  ger.1  = Bundesliga
-  ita.1  = Serie A
-  fra.1  = Ligue 1
-  uefa.champions_league
-  fifa.world
-  usa.1  = MLS
-  afcon   = Africa Cup of Nations
 
 Compatible with Python 3.8+
 """
@@ -36,57 +16,64 @@ from .base import SportsDataProvider, MatchScore
 
 logger = logging.getLogger(__name__)
 
-SITE_API   = "https://site.api.espn.com/apis/site/v2/sports"
+SITE_API    = "https://site.api.espn.com/apis/site/v2/sports"
 SITE_API_V2 = "https://site.api.espn.com/apis/v2/sports"
 
-# ESPN status → our normalised status
 STATUS_MAP = {
-    "STATUS_SCHEDULED":       "ns",
-    "STATUS_IN_PROGRESS":     "live",
-    "STATUS_HALFTIME":        "ht",
-    "STATUS_END_PERIOD":      "live",
-    "STATUS_FINAL":           "ft",
-    "STATUS_FULL_TIME":       "ft",
-    "STATUS_POSTPONED":       "postponed",
-    "STATUS_CANCELED":        "cancelled",
-    "STATUS_SUSPENDED":       "postponed",
-    "STATUS_DELAYED":         "postponed",
-    "STATUS_RAIN_DELAY":      "postponed",
-    "STATUS_EXTRA_TIME":      "live",
-    "STATUS_PENALTY":         "live",
-    "STATUS_ABANDONED":       "cancelled",
-    "STATUS_FORFEIT":         "ft",
-    "STATUS_END_OF_EXTRATIME":"live",
+    "STATUS_SCHEDULED":        "ns",
+    "STATUS_IN_PROGRESS":      "live",
+    "STATUS_HALFTIME":         "ht",
+    "STATUS_END_PERIOD":       "live",
+    "STATUS_FINAL":            "ft",
+    "STATUS_FULL_TIME":        "ft",
+    "STATUS_POSTPONED":        "postponed",
+    "STATUS_CANCELED":         "cancelled",
+    "STATUS_SUSPENDED":        "postponed",
+    "STATUS_DELAYED":          "postponed",
+    "STATUS_RAIN_DELAY":       "postponed",
+    "STATUS_EXTRA_TIME":       "live",
+    "STATUS_PENALTY":          "live",
+    "STATUS_ABANDONED":        "cancelled",
+    "STATUS_FORFEIT":          "ft",
+    "STATUS_END_OF_EXTRATIME": "live",
 }
 
-# Featured soccer leagues — (league_slug, display_name)
+# (league_slug, display_name) — display_name is the fallback used
+# whenever ESPN's response doesn't embed league info on the event itself.
 FEATURED_LEAGUES = [
-    ("eng.1",               "Premier League"),
-    ("esp.1",               "La Liga"),
-    ("ger.1",               "Bundesliga"),
-    ("ita.1",               "Serie A"),
-    ("fra.1",               "Ligue 1"),
+    ("eng.1",                "Premier League"),
+    ("esp.1",                "La Liga"),
+    ("ger.1",                "Bundesliga"),
+    ("ita.1",                "Serie A"),
+    ("fra.1",                "Ligue 1"),
     ("uefa.champions_league","Champions League"),
-    ("fifa.world",          "World Cup"),
-    ("usa.1",               "MLS"),
-    ("ned.1",               "Eredivisie"),
-    ("por.1",               "Primeira Liga"),
+    ("fifa.world",           "FIFA World Cup"),
+    ("usa.1",                "MLS"),
+    ("ned.1",                "Eredivisie"),
+    ("por.1",                "Primeira Liga"),
 ]
+
+# Map our standings/lookup IDs back to slugs
+ID_TO_SLUG = {
+    "39": "eng.1", "140": "esp.1", "78": "ger.1",
+    "135": "ita.1", "61": "fra.1", "2": "uefa.champions_league",
+    "1": "fifa.world", "17": "eng.1", "564": "esp.1",
+    "eng.1": "eng.1", "esp.1": "esp.1", "ger.1": "ger.1",
+    "ita.1": "ita.1", "fra.1": "fra.1",
+    "uefa.champions_league": "uefa.champions_league",
+    "fifa.world": "fifa.world",
+}
 
 
 class ESPNProvider(SportsDataProvider):
 
     def __init__(self):
-        # No API key needed — ESPN is fully public
         logger.info("ESPN provider ready (no API key required)")
 
-    def _get(self, url, params=None, quiet_scoreboard_empty=False):
-        """GET request to ESPN API — no auth headers needed."""
+    def _get(self, url, params=None):
         try:
             resp = requests.get(
-                url,
-                params=params or {},
-                timeout=10,
+                url, params=params or {}, timeout=10,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; LivescoreApp/1.0)"},
             )
             resp.raise_for_status()
@@ -95,63 +82,23 @@ class ESPNProvider(SportsDataProvider):
             logger.error("Timeout on {}".format(url))
             raise
         except requests.HTTPError as e:
-            response = e.response
-            body = response.text if response is not None else ""
-            if not (
-                quiet_scoreboard_empty
-                and response is not None
-                and response.status_code == 400
-                and "Failed to get events endpoint" in body
-            ):
-                status_code = response.status_code if response is not None else "unknown"
-                logger.error("HTTP {} on {}: {}".format(
-                    status_code, url, body[:200]))
+            logger.error("HTTP {} on {}: {}".format(
+                e.response.status_code, url, e.response.text[:200]))
             raise
         except requests.RequestException as e:
             logger.error("Request error on {}: {}".format(url, e))
             raise
 
-    def _get_scoreboard(self, league_slug, params=None):
-        """Fetch a scoreboard, treating ESPN's empty-event 400 as no games.
-
-        Some ESPN soccer competitions intermittently return HTTP 400 with
-        ``Failed to get events endpoint`` from the scoreboard endpoint instead
-        of an empty events list (for example when a competition is out of
-        season or has no event endpoint for the requested date). This should
-        not make the app look broken; callers can safely process an empty
-        scoreboard.
-        """
-        url = "{}/soccer/{}/scoreboard".format(SITE_API, league_slug)
-        try:
-            return self._get(url, params, quiet_scoreboard_empty=True)
-        except requests.HTTPError as e:
-            response = e.response
-            body = response.text if response is not None else ""
-            if (
-                response is not None
-                and response.status_code == 400
-                and "Failed to get events endpoint" in body
-            ):
-                logger.info(
-                    "ESPN scoreboard unavailable for %s; treating as no events",
-                    league_slug,
-                )
-                return {"events": []}
-            raise
-
     def _parse_status(self, competition):
-        """Extract our normalised status from an ESPN competition object."""
         status = competition.get("status") or {}
         stype  = status.get("type") or {}
-        state  = stype.get("state", "").lower()       # pre / in / post
-        name   = stype.get("name", "")                # STATUS_IN_PROGRESS etc.
+        state  = stype.get("state", "").lower()
+        name   = stype.get("name", "")
 
         mapped = STATUS_MAP.get(name)
         if mapped:
             return mapped
         if state == "in":
-            # Check halftime
-            period = status.get("period", 0)
             detail = stype.get("shortDetail", "").lower()
             if "half" in detail or "ht" in detail:
                 return "ht"
@@ -161,9 +108,8 @@ class ESPNProvider(SportsDataProvider):
         return "ns"
 
     def _get_minute(self, competition):
-        """Extract current match minute from ESPN clock."""
         status    = competition.get("status") or {}
-        clock_str = status.get("displayClock", "")     # e.g. "67:23"
+        clock_str = status.get("displayClock", "")
         if clock_str:
             try:
                 return int(clock_str.split(":")[0])
@@ -172,22 +118,27 @@ class ESPNProvider(SportsDataProvider):
         return None
 
     def _get_competitor(self, competitors, home_away):
-        """Find home or away competitor object."""
         for c in (competitors or []):
             if c.get("homeAway", "").lower() == home_away:
                 return c
         return {}
 
     def _competitor_logo(self, competitor):
-        """Extract best logo URL from a competitor."""
-        team = competitor.get("team") or {}
+        team  = competitor.get("team") or {}
         logos = team.get("logos") or []
         if logos:
             return logos[0].get("href")
         return team.get("logo")
 
-    def _map_competition(self, event, competition):
-        """Map ESPN event + competition to our MatchScore."""
+    def _map_competition(self, event, competition, league_name="", league_id="", league_logo=None):
+        """
+        Map ESPN event + competition to our MatchScore.
+
+        league_name/league_id/league_logo are passed in from the CALLER
+        (the scoreboard request context), since ESPN's per-event payload
+        does not reliably embed this — it's a property of which
+        scoreboard endpoint you queried, not the event itself.
+        """
         competitors = competition.get("competitors") or []
         home_c      = self._get_competitor(competitors, "home")
         away_c      = self._get_competitor(competitors, "away")
@@ -198,33 +149,36 @@ class ESPNProvider(SportsDataProvider):
         status      = self._parse_status(competition)
         minute      = self._get_minute(competition) if status == "live" else None
 
-        # Scores
-        home_score  = None
-        away_score  = None
+        home_score = None
+        away_score = None
         if home_c.get("score") not in (None, ""):
             try:
-                home_score = int(home_c["score"])
+                home_score = int(float(home_c["score"]))
             except (ValueError, TypeError):
                 pass
         if away_c.get("score") not in (None, ""):
             try:
-                away_score = int(away_c["score"])
+                away_score = int(float(away_c["score"]))
             except (ValueError, TypeError):
                 pass
 
-        # League info from event
-        league      = event.get("league") or {}
-        league_name = league.get("name", "")
-        league_id   = league.get("slug", str(league.get("id", "")))
-        league_logo = (league.get("logos") or [{}])[0].get("href") if league.get("logos") else None
+        # Fall back to whatever event-level league info exists (rare),
+        # otherwise use what was passed in from the scoreboard context.
+        event_league = event.get("league") or {}
+        final_league_name = event_league.get("name") or league_name
+        final_league_id   = event_league.get("slug") or str(event_league.get("id", "")) or league_id
+        final_league_logo = (
+            (event_league.get("logos") or [{}])[0].get("href")
+            if event_league.get("logos") else league_logo
+        )
 
-        # Kickoff
         kickoff_utc = event.get("date", "")
 
-        # Venue
-        venue_obj   = competition.get("venue") or {}
-        venue_name  = venue_obj.get("fullName") or venue_obj.get("address", {}).get("city", "")
-        venue_address = venue_obj.get("address") or {}
+        venue_obj  = competition.get("venue") or {}
+        addr       = venue_obj.get("address") or {}
+        venue_name = venue_obj.get("fullName") or addr.get("city", "")
+
+        season_obj = event.get("season") or {}
 
         return MatchScore(
             match_id         = str(event.get("id", "")),
@@ -236,55 +190,71 @@ class ESPNProvider(SportsDataProvider):
             away_score       = away_score,
             status           = status,
             minute           = minute,
-            competition      = league_name,
-            competition_id   = league_id,
+            competition      = final_league_name,
+            competition_id   = final_league_id,
             kickoff_utc      = kickoff_utc,
             venue            = venue_name or None,
-            round            = event.get("season", {}).get("slug"),
+            round            = season_obj.get("slug"),
             home_logo        = self._competitor_logo(home_c),
             away_logo        = self._competitor_logo(away_c),
-            competition_logo = league_logo,
+            competition_logo = final_league_logo,
             extra={
-                "short_name": event.get("shortName", ""),
-                "season":     event.get("season", {}).get("year"),
-                "league_slug": league_id,
+                "short_name":   event.get("shortName", ""),
+                "season":       season_obj.get("year"),
+                "league_slug":  final_league_id,
                 "venue_detail": {
-                    "id": venue_obj.get("id"),
-                    "name": venue_obj.get("fullName") or venue_obj.get("name"),
-                    "full_name": venue_obj.get("fullName"),
-                    "city": venue_address.get("city"),
-                    "country": venue_address.get("country"),
-                    "capacity": venue_obj.get("capacity"),
+                    "id":        venue_obj.get("id"),
+                    "name":      venue_obj.get("fullName"),
+                    "city":      addr.get("city"),
+                    "country":   addr.get("country"),
+                    "capacity":  venue_obj.get("capacity"),
                 },
             },
         )
 
-    def _events_from_scoreboard(self, data):
-        """Extract all MatchScore objects from a scoreboard response."""
+    def _events_from_scoreboard(self, data, league_name="", league_id="", league_logo=None):
+        """
+        Extract all MatchScore objects from a scoreboard response.
+        league_name/id/logo come from the scoreboard's own ?leagues block
+        if present, otherwise from what was passed in by the caller.
+        """
+        # ESPN scoreboard responses sometimes include a top-level 'leagues' array
+        leagues_block = data.get("leagues") or []
+        if leagues_block:
+            top_league   = leagues_block[0]
+            league_name  = top_league.get("name") or league_name
+            league_id    = top_league.get("slug") or str(top_league.get("id", "")) or league_id
+            logos        = top_league.get("logos") or []
+            league_logo  = logos[0].get("href") if logos else league_logo
+
         results = []
         for event in (data.get("events") or []):
             for comp in (event.get("competitions") or []):
                 try:
-                    results.append(self._map_competition(event, comp))
+                    results.append(self._map_competition(
+                        event, comp,
+                        league_name=league_name,
+                        league_id=league_id,
+                        league_logo=league_logo,
+                    ))
                 except Exception as e:
-                    logger.warning("Failed to map event {}: {}".format(
-                        event.get("id"), e))
+                    logger.warning("Failed to map event {}: {}".format(event.get("id"), e))
         return results
 
     # ── Live scores ───────────────────────────────────────────
 
     def get_live_scores(self, sport="football"):
-        """
-        Fetch live scores across all featured soccer leagues.
-        ESPN scoreboard returns both live and scheduled — we filter for live.
-        """
         all_live = []
         seen     = set()
 
         for league_slug, league_name in FEATURED_LEAGUES:
             try:
-                data = self._get_scoreboard(league_slug)
-                for match in self._events_from_scoreboard(data):
+                url  = "{}/soccer/{}/scoreboard".format(SITE_API, league_slug)
+                data = self._get(url)
+                matches = self._events_from_scoreboard(
+                    data, league_name=league_name, league_id=league_slug
+                )
+                for match in matches:
                     if match.match_id not in seen and match.status in ("live", "ht"):
                         seen.add(match.match_id)
                         all_live.append(match)
@@ -297,14 +267,9 @@ class ESPNProvider(SportsDataProvider):
     # ── Fixtures ──────────────────────────────────────────────
 
     def get_fixtures(self, date_from, date_to, sport="football"):
-        """
-        Fetch fixtures between two dates across all featured leagues.
-        ESPN scoreboard accepts ?dates=YYYYMMDD for specific dates.
-        """
         results = []
         seen    = set()
 
-        # Build list of dates to fetch
         try:
             start = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             end   = datetime.strptime(date_to,   "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -318,11 +283,15 @@ class ESPNProvider(SportsDataProvider):
             dates.append(current.strftime("%Y%m%d"))
             current += timedelta(days=1)
 
-        for league_slug, _ in FEATURED_LEAGUES:
+        for league_slug, league_name in FEATURED_LEAGUES:
             for date_str in dates:
                 try:
-                    data = self._get_scoreboard(league_slug, {"dates": date_str})
-                    for match in self._events_from_scoreboard(data):
+                    url  = "{}/soccer/{}/scoreboard".format(SITE_API, league_slug)
+                    data = self._get(url, {"dates": date_str})
+                    matches = self._events_from_scoreboard(
+                        data, league_name=league_name, league_id=league_slug
+                    )
+                    for match in matches:
                         if match.match_id not in seen:
                             seen.add(match.match_id)
                             results.append(match.to_dict())
@@ -334,40 +303,10 @@ class ESPNProvider(SportsDataProvider):
         logger.info("ESPN: {} fixtures ({} to {})".format(len(results), date_from, date_to))
         return results
 
-    def _summary_event_for_header(self, fixture_id, header, competition):
-        """Build an event-shaped object from ESPN summary data.
-
-        Scoreboard responses expose kickoff and league data on the event, while
-        summary responses keep the same details in slightly different places.
-        Normalising those fields before calling ``_map_competition`` prevents
-        the match detail page from falling back to ``TBC`` for valid matches.
-        """
-        league = header.get("league") or competition.get("league") or {}
-        kickoff_utc = (
-            header.get("gameDate")
-            or header.get("date")
-            or competition.get("date")
-            or competition.get("startDate")
-            or ""
-        )
-
-        return {
-            "id": str(header.get("id") or fixture_id),
-            "date": kickoff_utc,
-            "league": league,
-            "shortName": header.get("shortName", ""),
-            "season": header.get("season") or competition.get("season") or {},
-        }
-
     # ── Match detail ──────────────────────────────────────────
 
     def get_fixture_detail(self, fixture_id):
-        """
-        GET /apis/site/v2/sports/soccer/{league}/summary?event={id}
-        Returns full match detail: score, events, stats, lineups.
-        We try each league slug until we find the match.
-        """
-        for league_slug, _ in FEATURED_LEAGUES:
+        for league_slug, league_name in FEATURED_LEAGUES:
             try:
                 url  = "{}/soccer/{}/summary".format(SITE_API, league_slug)
                 data = self._get(url, {"event": fixture_id})
@@ -380,49 +319,33 @@ class ESPNProvider(SportsDataProvider):
                 if not competitions:
                     continue
 
-                comp      = competitions[0]
-                event_obj = self._summary_event_for_header(fixture_id, header, comp)
-                score_obj = self._map_competition(event_obj, comp)
+                comp        = competitions[0]
+                header_league = header.get("league") or {}
+                event_obj   = {
+                    "id":     fixture_id,
+                    "date":   header.get("gameDate", ""),
+                    "league": header_league,
+                }
+                score_obj = self._map_competition(
+                    event_obj, comp,
+                    league_name=header_league.get("name") or league_name,
+                    league_id=league_slug,
+                )
 
-                # Match metadata
-                venue_obj = comp.get("venue") or {}
-                venue_address = venue_obj.get("address") or {}
-                officials = comp.get("officials") or data.get("officials") or []
-                referee = None
-                for official in officials:
-                    display_name = official.get("displayName") or official.get("fullName")
-                    role = (official.get("position") or {}).get("name") or official.get("role") or ""
-                    if display_name and (not referee or "referee" in role.lower()):
-                        referee = display_name
-                        if "referee" in role.lower():
-                            break
-
-                # Play-by-play / events (goals, cards, substitutions)
                 events = []
-                event_keywords = ("goal", "card", "substitution", "substitute", "penalty")
                 for play in (data.get("plays") or []):
                     ptype = play.get("type") or {}
-                    text = play.get("text", "")
-                    type_text = ptype.get("text", "")
-                    if not any(keyword in f"{type_text} {text}".lower() for keyword in event_keywords):
-                        continue
-                    clock = play.get("clock") or {}
-                    minute = None
-                    try:
-                        minute = int(str(clock.get("displayValue", "")).split(":")[0].replace("+", ""))
-                    except (TypeError, ValueError):
-                        pass
+                    participants = play.get("participants") or [{}]
+                    athlete = participants[0].get("athlete", {}) if participants else {}
                     events.append({
-                        "time":   clock.get("displayValue"),
-                        "minute": minute,
+                        "time":   play.get("clock", {}).get("displayValue"),
                         "team":   (play.get("team") or {}).get("displayName"),
-                        "player": (play.get("participants") or [{}])[0].get("athlete", {}).get("displayName"),
+                        "player": athlete.get("displayName"),
                         "assist": None,
-                        "type":   type_text,
-                        "detail": text,
+                        "type":   ptype.get("text", ""),
+                        "detail": play.get("text", ""),
                     })
 
-                # Statistics
                 stats = {}
                 for team_stats in (data.get("statistics") or []):
                     team_name = (team_stats.get("team") or {}).get("displayName", "")
@@ -430,20 +353,7 @@ class ESPNProvider(SportsDataProvider):
                     for stat in (team_stats.get("stats") or []):
                         stats[team_name][stat.get("label", "")] = stat.get("displayValue")
 
-                return {
-                    **score_obj.to_dict(),
-                    "events": events,
-                    "statistics": stats,
-                    "referee": referee,
-                    "venue_detail": {
-                        "id": venue_obj.get("id"),
-                        "name": venue_obj.get("fullName") or venue_obj.get("name"),
-                        "full_name": venue_obj.get("fullName"),
-                        "city": venue_address.get("city"),
-                        "country": venue_address.get("country"),
-                        "capacity": venue_obj.get("capacity"),
-                    },
-                }
+                return {**score_obj.to_dict(), "events": events, "statistics": stats}
 
             except Exception as e:
                 logger.warning("Summary failed for {} on {}: {}".format(
@@ -456,9 +366,6 @@ class ESPNProvider(SportsDataProvider):
     # ── Lineups ───────────────────────────────────────────────
 
     def get_lineups(self, fixture_id):
-        """
-        Extract lineups from the ESPN game summary rosters section.
-        """
         for league_slug, _ in FEATURED_LEAGUES:
             try:
                 url  = "{}/soccer/{}/summary".format(SITE_API, league_slug)
@@ -489,9 +396,10 @@ class ESPNProvider(SportsDataProvider):
                         else:
                             substitutes.append(entry)
 
+                    coach_list = team_roster.get("coach") or []
                     lineups[team_name] = {
                         "formation":   team_roster.get("formation"),
-                        "coach":       (team_roster.get("coach") or [{}])[0].get("name") if team_roster.get("coach") else None,
+                        "coach":       coach_list[0].get("name") if coach_list else None,
                         "start_xi":    start_xi,
                         "substitutes": substitutes,
                     }
@@ -509,24 +417,13 @@ class ESPNProvider(SportsDataProvider):
     # ── Standings ─────────────────────────────────────────────
 
     def get_standings(self, competition_id, season):
-        """
-        GET https://site.api.espn.com/apis/v2/sports/soccer/{league}/standings
-        competition_id can be a league slug (eng.1) or numeric ESPN league ID.
-        """
-        # Map numeric IDs back to slugs if needed
-        id_to_slug = {
-            "39": "eng.1", "140": "esp.1", "78": "ger.1",
-            "135": "ita.1", "61": "fra.1", "2": "uefa.champions_league",
-            "1": "fifa.world", "17": "eng.1", "564": "esp.1",
-        }
-        league_slug = id_to_slug.get(str(competition_id), str(competition_id))
+        league_slug = ID_TO_SLUG.get(str(competition_id), str(competition_id))
 
         try:
             url  = "{}/soccer/{}/standings".format(SITE_API_V2, league_slug)
             data = self._get(url, {"season": season})
 
             children = data.get("children") or []
-            # Some leagues return nested groups (e.g. World Cup)
             if not children:
                 children = [data]
 
@@ -540,8 +437,7 @@ class ESPNProvider(SportsDataProvider):
                 group = []
                 for entry in entries:
                     team    = entry.get("team") or {}
-                    stats   = {s["name"]: s.get("value", 0)
-                               for s in (entry.get("stats") or [])}
+                    stats   = {s["name"]: s.get("value", 0) for s in (entry.get("stats") or [])}
                     logos   = team.get("logos") or []
                     logo_url = logos[0].get("href") if logos else None
 
@@ -574,16 +470,11 @@ class ESPNProvider(SportsDataProvider):
     # ── Team ──────────────────────────────────────────────────
 
     def get_team(self, team_id):
-        """
-        GET /apis/site/v2/sports/soccer/{league}/teams/{id}
-        Try each league until found.
-        """
         for league_slug, _ in FEATURED_LEAGUES:
             try:
                 url  = "{}/soccer/{}/teams/{}".format(SITE_API, league_slug, team_id)
                 data = self._get(url)
-                team = (data.get("team") or data.get("sports", [{}])[0]
-                        .get("leagues", [{}])[0].get("teams", [{}])[0].get("team"))
+                team = data.get("team")
                 if not team:
                     continue
 
@@ -612,9 +503,8 @@ class ESPNProvider(SportsDataProvider):
         return {}
 
     def get_team_fixtures(self, team_id, last=5, next=5):
-        """GET /apis/site/v2/sports/soccer/{league}/teams/{id}/schedule"""
         result = {"last": [], "next": []}
-        for league_slug, _ in FEATURED_LEAGUES:
+        for league_slug, league_name in FEATURED_LEAGUES:
             try:
                 url  = "{}/soccer/{}/teams/{}/schedule".format(SITE_API, league_slug, team_id)
                 data = self._get(url)
@@ -628,10 +518,11 @@ class ESPNProvider(SportsDataProvider):
 
                 for event in events:
                     for comp in (event.get("competitions") or []):
-                        match = self._map_competition(event, comp)
+                        match = self._map_competition(
+                            event, comp, league_name=league_name, league_id=league_slug
+                        )
                         try:
-                            kickoff = datetime.fromisoformat(
-                                match.kickoff_utc.replace("Z", "+00:00"))
+                            kickoff = datetime.fromisoformat(match.kickoff_utc.replace("Z", "+00:00"))
                             if kickoff < now:
                                 past.append(match.to_dict())
                             else:
@@ -644,8 +535,7 @@ class ESPNProvider(SportsDataProvider):
                 return result
 
             except Exception as e:
-                logger.warning("Team schedule failed for {} {}: {}".format(
-                    team_id, league_slug, e))
+                logger.warning("Team schedule failed for {} {}: {}".format(team_id, league_slug, e))
                 continue
 
         return result
