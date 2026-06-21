@@ -37,7 +37,7 @@ services:
     staticPublishPath: ./dist
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://livescore-api.onrender.com
+        value: https://livescore-api-h3wc.onrender.com
     routes:
       - type: rewrite
         source: /*
