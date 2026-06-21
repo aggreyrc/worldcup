@@ -1,5 +1,5 @@
 services:
-  # ── Flask API ──────────────────────────────────────────
+  # ── Flask API (serves data directly, Flask-Caching handles Redis TTL) ──
   - type: web
     name: livescore-api
     runtime: python
@@ -11,7 +11,7 @@ services:
       - key: FLASK_ENV
         value: production
       - key: DEBUG
-        value: false
+        value: "false"
       - key: SECRET_KEY
         generateValue: true
       - key: FOOTBALL_PROVIDER
@@ -25,47 +25,8 @@ services:
           name: livescore-redis
           type: redis
           property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: livescore-redis
-          type: redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          name: livescore-redis
-          type: redis
-          property: connectionString
-
-  # ── Celery Worker ──────────────────────────────────────
-  - type: worker
-    name: livescore-worker
-    runtime: python
-    plan: free
-    rootDir: backend
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "celery -A app.celery_app worker --beat --loglevel=info --concurrency=2"
-    envVars:
-      - key: FOOTBALL_PROVIDER
-        value: espn
-      - key: DATABASE_URL
-        fromDatabase:
-          name: livescore-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: livescore-redis
-          type: redis
-          property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: livescore-redis
-          type: redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          name: livescore-redis
-          type: redis
-          property: connectionString
+      - key: PYTHON_VERSION
+        value: "3.11.9"
 
   # ── React Frontend (static site) ───────────────────────
   - type: web
